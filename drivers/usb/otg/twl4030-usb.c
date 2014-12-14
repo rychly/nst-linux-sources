@@ -505,9 +505,6 @@ static void __twl4030_phy_power(struct twl4030_usb *twl, int on)
 
 static void twl4030_phy_power(struct twl4030_usb *twl, int on)
 {
-	u8 pwr;
-
-	pwr = twl4030_usb_read(twl, PHY_PWR_CTRL);
 	if (on) {
 		regulator_enable(twl->usb3v1);
 		regulator_enable(twl->usb1v8);
@@ -526,12 +523,29 @@ static void twl4030_phy_power(struct twl4030_usb *twl, int on)
 				  twl4030_usb_read(twl, PHY_CLK_CTRL) |
 					(PHY_CLK_CTRL_CLOCKGATING_EN |
 						PHY_CLK_CTRL_CLK32K_EN));
+
+                twl4030_i2c_access(twl, 1);
+                twl4030_usb_set_bits(twl, FUNC_CTRL, FUNC_CTRL_SUSPENDM);
+                twl4030_usb_clear_bits(twl, FUNC_CTRL, FUNC_CTRL_OPMODE_MASK );
+                twl4030_i2c_access(twl, 0);
 	} else  {
+                __twl4030_phy_power(twl, 1);
+                twl4030_i2c_access(twl, 1);
+                twl4030_usb_set_bits(twl, FUNC_CTRL, FUNC_CTRL_SUSPENDM);
+
+                twl4030_usb_clear_bits(twl, FUNC_CTRL,
+                        (FUNC_CTRL_OPMODE_MASK & ~ FUNC_CTRL_OPMODE_NONDRIVING) );
+
+                twl4030_usb_set_bits(twl, FUNC_CTRL, FUNC_CTRL_OPMODE_NONDRIVING);
+                twl4030_usb_clear_bits(twl, FUNC_CTRL, FUNC_CTRL_SUSPENDM);
+
+                twl4030_i2c_access(twl, 0);
 		__twl4030_phy_power(twl, 0);
 		regulator_disable(twl->usb1v5);
 		regulator_disable(twl->usb1v8);
 		regulator_disable(twl->usb3v1);
 	}
+
 }
 
 static void twl4030_phy_suspend(struct twl4030_usb *twl, int controller_off)
@@ -720,30 +734,37 @@ static int twl4030_set_host(struct otg_transceiver *x, struct usb_bus *host)
 
 #if defined(CONFIG_REGULATOR_BQ24073) || \
     defined(CONFIG_REGULATOR_BQ24073_MODULE)	
-static void twl4030_usb_bq_charge_enable(struct twl4030_usb *twl)
+static int twl4030_usb_bq_charge_enable(struct twl4030_usb *twl)
 {
     u8 chg_pres = 0;
     int limit;
+    int retval = 0;
 	
-	/* FIXME: This is ugly hack, but as the charger detection module
+	/* FIXME: This is a slight hack, but as the charger detection module
 	 * is not wanting to set any interrupt flag, currently this
 	 * appears to be the only way to do it for now.
 	 * We don't care about delayed USB IRQs, as the VBUS and ID pin
 	 * debounce timers are large enough, and we will handle the IRQ
 	 * anyway after we return from the handler.
 	 */
-	msleep(150);
 
+	msleep(850);
 	chg_pres = twl4030_readb(twl, TWL4030_MODULE_MAIN_CHARGE,
 					 TPS65921_USB_DTCT_CTRL);
+
 	/* if usb is connected to usb host
 	 * 500ma, otherwise 1500ma limit
 	 */
 	chg_pres &= TPS65921_USB_DET_STS_MASK;
-	if (chg_pres != TPS65921_USB_DET_STS_500MA)
+	if (chg_pres != TPS65921_USB_DET_STS_500MA) {
 		limit = 500000;
-	else
+		retval = 1;
+	}
+	else {
 		limit = 1500000;
+                wake_unlock(&twl->irq_wake_lock);
+		retval = 0;
+        }
 
 #if defined(CONFIG_BATTERY_BQ27510)
 	bq27x10_charger_type(limit);
@@ -755,6 +776,7 @@ static void twl4030_usb_bq_charge_enable(struct twl4030_usb *twl)
 	regulator_set_current_limit(bci_regulator, limit, limit);
 
 	dev_dbg(twl->dev, "Set USB Charger limit to %duA\n", limit);
+	return retval;
 }
 
 static void twl4030_usb_bq_charge_disable(struct twl4030_usb *twl)
@@ -826,7 +848,11 @@ static void twl4030_usb_irq_work(struct work_struct *work)
 		return;
 
 	if (USB_LINK_VBUS == status) {
-        twl4030_usb_bq_charge_enable(twl);
+        	if (twl4030_usb_bq_charge_enable(twl) == 0) {
+			if (x.link_force_active)
+				x.link_force_active(0);
+			twl4030_phy_suspend(twl, 0);
+		}
    	} else {
         twl4030_usb_bq_charge_disable(twl);
 	}
