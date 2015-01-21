@@ -903,6 +903,30 @@ static struct shrinker dcache_shrinker = {
 	.seeks = DEFAULT_SEEKS,
 };
 
+void d_set_d_op(struct dentry *dentry, const struct dentry_operations *op)
+{
+	BUG_ON(dentry->d_op);
+	/*
+	BUG_ON(dentry->d_flags & (DCACHE_OP_HASH	|
+				DCACHE_OP_COMPARE	|
+				DCACHE_OP_REVALIDATE	|
+				DCACHE_OP_DELETE ));
+	*/
+	dentry->d_op = op;
+	if (!op)
+		return;
+	/*
+	if (op->d_hash)
+		dentry->d_flags |= DCACHE_OP_HASH;
+	if (op->d_compare)
+		dentry->d_flags |= DCACHE_OP_COMPARE;
+	if (op->d_revalidate)
+		dentry->d_flags |= DCACHE_OP_REVALIDATE;
+	if (op->d_delete)
+		dentry->d_flags |= DCACHE_OP_DELETE;
+	*/
+}
+
 /**
  * d_alloc	-	allocate a dcache entry
  * @parent: parent of entry to allocate
@@ -955,6 +979,7 @@ struct dentry *d_alloc(struct dentry * parent, const struct qstr *name)
 	if (parent) {
 		dentry->d_parent = dget(parent);
 		dentry->d_sb = parent->d_sb;
+		d_set_d_op(dentry, dentry->d_sb->s_d_op);
 	} else {
 		INIT_LIST_HEAD(&dentry->d_u.d_child);
 	}
@@ -1100,6 +1125,7 @@ struct dentry * d_alloc_root(struct inode * root_inode)
 		res = d_alloc(NULL, &name);
 		if (res) {
 			res->d_sb = root_inode->i_sb;
+			d_set_d_op(res, res->d_sb->s_d_op);
 			res->d_parent = res;
 			d_instantiate(res, root_inode);
 		}
@@ -1166,6 +1192,7 @@ struct dentry *d_obtain_alias(struct inode *inode)
 	/* attach a disconnected dentry */
 	spin_lock(&tmp->d_lock);
 	tmp->d_sb = inode->i_sb;
+	d_set_d_op(tmp, tmp->d_sb->s_d_op);
 	tmp->d_inode = inode;
 	tmp->d_flags |= DCACHE_DISCONNECTED;
 	tmp->d_flags &= ~DCACHE_UNHASHED;

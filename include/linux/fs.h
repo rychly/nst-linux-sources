@@ -1203,6 +1203,8 @@ struct super_block {
 	 * storage for asynchronous operations
 	 */
 	struct list_head s_async_list;
+
+	const struct dentry_operations *s_d_op; /* default d_op for dentries */
 };
 
 extern struct timespec current_fs_time(struct super_block *sb);
