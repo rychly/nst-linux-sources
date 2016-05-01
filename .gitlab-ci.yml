@@ -1,0 +1,43 @@
+# http://doc.gitlab.com/ce/ci/yaml/README.html
+# https://hub.docker.com/_/gcc/
+# http://releases.linaro.org/components/toolchain/binaries/
+
+image: gcc:latest
+
+variables:
+  PUBLIC: "public"
+
+.toolchain: &toolchain
+  variables:
+    # linaro-androidtoolchain versions >4.7 does not work, they build a kernel, however, the kernel cannot boot the device (they are rebooting)
+    LINAROVER: "4.7-2014.04"
+    LINAROBLD: "3"
+    TCDIR: "${CI_PROJECT_DIR}/../android-toolchain-eabi/bin"
+    TCPRF: "arm-linux-androideabi-"
+    TCARCH: "arm"
+  before_script:
+    - test -e .gitmodules && sed -i 's|\(\s\)git@\([^:]*\):\(.*\.git\)$|\1https://\2/\3|g' .gitmodules
+    - git submodule init
+    - git submodule update --recursive
+    - apt-get --quiet update --yes
+    - apt-get --quiet install --yes lib32stdc++6 u-boot-tools
+    - wget --quiet --output-document=- "https://snapshots.linaro.org/android/~linaro-android/toolchain-${LINAROVER}/${LINAROBLD}/android-toolchain-eabi-${LINAROVER}-x86.tar.bz2" | tar --extract --bzip2 -C .. && echo "Linaro ${LINAROVER}-${LINAROBLD} downloaded and extracted"
+    - NUMCPUS=$(grep -c '^processor\s' /proc/cpuinfo)
+    - export PATH="${PATH}:${TCDIR}"
+
+stages:
+  - build
+
+pages:
+  stage: build
+  only:
+    - master
+  <<: *toolchain
+  script:
+    - make omap3621_gossamer_evt1c_marek2_defconfig
+    - make ARCH="${TCARCH}" CROSS_COMPILE="${TCPRF}" "--jobs=${NUMCPUS}" "--load-average=${NUMCPUS}" uImage
+    - mkdir -p "${PUBLIC}"
+    - mv -v arch/arm/boot/uImage "${PUBLIC}/"
+  artifacts:
+    paths:
+      - ${PUBLIC}
